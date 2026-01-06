@@ -277,21 +277,6 @@ int arch_vmlaunch(void)
     return error ? VMX_ERROR_WITH_STATUS : VMX_ERROR_WITHOUT_STATUS;
 }
 
-int arch_vmresume(void)
-{
-    u8 error;
-    
-    asm volatile(
-        "vmresume\n\t"
-        "setc %[err]\n\t"
-        : [err] "=rm" (error)
-        :
-        : "cc", "memory"
-    );
-    
-    return error ? -1 : 0;
-}
-
 u64 arch_vmread(u64 field)
 {
     u64 value;

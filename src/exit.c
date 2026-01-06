@@ -66,6 +66,11 @@ static void vmexit_inject_exception(u8 vector, bool has_error_code, u32 error_co
     arch_vmwrite(VMCS_CTRL_VMENTRY_INTERRUPTION_INFORMATION_FIELD, info.AsUInt);
     if (has_error_code)
         arch_vmwrite(VMCS_CTRL_VMENTRY_EXCEPTION_ERROR_CODE, error_code);
+    
+    // per intel sdm vol 3 26.2.1.3: instruction length field is used only for
+    // software interrupts/exceptions (types 4, 5, 6). for hardware exceptions
+    // (type 3), this field is not used, but set to 0 for clarity
+    arch_vmwrite(VMCS_CTRL_VMENTRY_INSTRUCTION_LENGTH, 0);
 }
 
 /*
@@ -121,23 +126,6 @@ int vmexit_handle_cpuid(struct cpu_ctx *cpu, struct vmexit_ctx *ctx)
 }
 
 /*
-*   check if msr is in valid range per intel sdm
-*   valid ranges: 0x0-0x1fff, 0xc0000000-0xc0001fff
-*/
-static bool msr_is_valid(u32 msr)
-{
-    // low range: 0x0 - 0x1fff
-    if (msr <= 0x1fff)
-        return true;
-    
-    // high range: 0xc0000000 - 0xc0001fff
-    if (msr >= 0xc0000000 && msr <= 0xc0001fff)
-        return true;
-    
-    return false;
-}
-
-/*
 *   safe msr read - returns true on success, false on #gp
 */
 static bool safe_rdmsr(u32 msr, u64 *value)
@@ -171,15 +159,7 @@ int vmexit_handle_msr_read(struct cpu_ctx *cpu, struct vmexit_ctx *ctx)
     
     hv_cpu_log(debug, "rdmsr: msr=0x%x\n", msr);
     
-    // validate msr range per intel sdm
-    if (!msr_is_valid(msr)) {
-        hv_cpu_log(debug, "rdmsr: invalid msr 0x%x, injecting #gp\n", msr);
-        vmexit_inject_gp(0);
-        ctx->should_advance_rip = false;
-        return 0;
-    }
-    
-    // try to read the msr safely
+    // try to read the msr safely - this handles invalid msrs by returning false
     if (!safe_rdmsr(msr, &value)) {
         hv_cpu_log(debug, "rdmsr: msr 0x%x caused #gp, injecting\n", msr);
         vmexit_inject_gp(0);
@@ -203,15 +183,16 @@ int vmexit_handle_msr_write(struct cpu_ctx *cpu, struct vmexit_ctx *ctx)
     
     hv_cpu_log(debug, "wrmsr: msr=0x%x value=0x%llx\n", msr, value);
     
-    // validate msr range per intel sdm
-    if (!msr_is_valid(msr)) {
-        hv_cpu_log(debug, "wrmsr: invalid msr 0x%x, injecting #gp\n", msr);
+    // protect ia32_feature_control - guest cannot modify vmx settings
+    // this is a security measure to prevent vmx escape attempts
+    if (msr == IA32_FEATURE_CONTROL) {
+        hv_cpu_log(warn, "wrmsr: blocked write to ia32_feature_control\n");
         vmexit_inject_gp(0);
         ctx->should_advance_rip = false;
         return 0;
     }
     
-    // try to write the msr safely
+    // try to write the msr safely - this handles invalid msrs by returning false
     if (!safe_wrmsr(msr, value)) {
         hv_cpu_log(debug, "wrmsr: msr 0x%x caused #gp, injecting\n", msr);
         vmexit_inject_gp(0);
@@ -271,18 +252,32 @@ int vmexit_handle_ept_misconfig(struct cpu_ctx *cpu, struct vmexit_ctx *ctx)
 
 /*
 *   handle xsetbv vm-exit
-*   per intel sdm and reference implementations, validate xcr index and value
+*   per intel sdm vol 2b, validate xcr index and value per xcr0 rules
 */
 int vmexit_handle_xsetbv(struct cpu_ctx *cpu, struct vmexit_ctx *ctx)
 {
     u32 index = (u32)ctx->regs->rcx;
     u64 value = (ctx->regs->rdx << 32) | (u32)ctx->regs->rax;
+    u64 xcr0_supported;
+    u32 eax, ebx, ecx, edx;
     
     hv_cpu_log(debug, "xsetbv: index=%u value=0x%llx\n", index, value);
     
     // only xcr0 is valid (index 0)
     if (index != 0) {
         hv_cpu_log(debug, "xsetbv: invalid xcr index %u, injecting #gp\n", index);
+        vmexit_inject_gp(0);
+        ctx->should_advance_rip = false;
+        return 0;
+    }
+    
+    // get supported xcr0 bits from cpuid leaf 0xd, subleaf 0
+    cpuid_count(0x0D, 0, &eax, &ebx, &ecx, &edx);
+    xcr0_supported = ((u64)edx << 32) | eax;
+    
+    // check for unsupported bits
+    if (value & ~xcr0_supported) {
+        hv_cpu_log(debug, "xsetbv: unsupported bits set, injecting #gp\n");
         vmexit_inject_gp(0);
         ctx->should_advance_rip = false;
         return 0;
@@ -302,6 +297,17 @@ int vmexit_handle_xsetbv(struct cpu_ctx *cpu, struct vmexit_ctx *ctx)
         vmexit_inject_gp(0);
         ctx->should_advance_rip = false;
         return 0;
+    }
+    
+    // avx-512: if any of opmask/zmm_hi256/hi16_zmm (bits 5-7) are set,
+    // all three must be set along with avx (bit 2)
+    if (value & 0xE0) {  // bits 5, 6, or 7
+        if ((value & 0xE4) != 0xE4) {  // must have bits 2, 5, 6, 7 all set
+            hv_cpu_log(debug, "xsetbv: avx-512 partial state, injecting #gp\n");
+            vmexit_inject_gp(0);
+            ctx->should_advance_rip = false;
+            return 0;
+        }
     }
     
     // execute xsetbv

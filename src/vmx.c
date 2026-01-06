@@ -78,6 +78,10 @@ VMX_MSR_BITMAP *vmx_alloc_msr_bitmap(void)
     // initialize to all zeros (no msr interception)
     memset(bitmap, 0, PAGE_SIZE);
     
+    // intercept writes to IA32_FEATURE_CONTROL to prevent guest from
+    // modifying vmx settings (security measure)
+    vmx_set_msr_intercept(bitmap, IA32_FEATURE_CONTROL, false, true);
+    
     return bitmap;
 }
 
@@ -203,7 +207,20 @@ int vmx_exit_root(struct cpu_ctx *cpu)
 */
 int vmx_setup_vmcs(struct cpu_ctx *cpu)
 {
-    return vmcs_init(cpu);
+    int ret;
+    
+    ret = vmcs_init(cpu);
+    if (ret != 0)
+        return ret;
+    
+    // validate vmcs configuration before launch
+    ret = vmcs_validate(cpu);
+    if (ret != 0) {
+        hv_cpu_log(err, "vmcs validation failed\n");
+        return ret;
+    }
+    
+    return 0;
 }
 
 /*
