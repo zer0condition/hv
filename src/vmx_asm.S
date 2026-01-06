@@ -272,19 +272,19 @@ SYM_FUNC_START(vmx_do_detach)
     UNWIND_HINT_REGS base=%rsp offset=0
     /*
     *   rax = cpu_ctx pointer
-    *   cpu_ctx->guest_rsp (offset 0x1c8) has the rsp to restore
-    *   cpu_ctx->guest_rip (offset 0x1d0) has the rip to return to
-    *   cpu_ctx->guest_rflags (offset 0x1d8) has rflags to restore
+    *   cpu_ctx->guest_rsp (offset 0x1c0) has the rsp to restore
+    *   cpu_ctx->guest_rip (offset 0x1c8) has the rip to return to
+    *   cpu_ctx->guest_rflags (offset 0x1d0) has rflags to restore
     */
     
     // load guest rsp into rcx (temp)
-    mov 0x1c8(%rax), %rcx    // guest_rsp
+    mov 0x1c0(%rax), %rcx    // guest_rsp
     
     // load guest rip into rdx (temp)
-    mov 0x1d0(%rax), %rdx    // guest_rip
+    mov 0x1c8(%rax), %rdx    // guest_rip
     
     // load guest rflags
-    mov 0x1d8(%rax), %rax    // guest_rflags
+    mov 0x1d0(%rax), %rax    // guest_rflags
     
     // switch to guest stack
     mov %rcx, %rsp

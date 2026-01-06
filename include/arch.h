@@ -100,7 +100,6 @@ int arch_vmxoff(void);
 int arch_vmclear(phys_addr_t vmcs_phys);
 int arch_vmptrld(phys_addr_t vmcs_phys);
 int arch_vmlaunch(void);
-int arch_vmresume(void);
 u64 arch_vmread(u64 field);
 int arch_vmwrite(u64 field, u64 value);
 
@@ -113,20 +112,6 @@ static inline bool arch_is_canonical(u64 addr)
     return (saddr >> 47) == 0 || (saddr >> 47) == -1;
 }
 
-static inline u64 arch_get_rsp(void)
-{
-    u64 rsp;
-    asm volatile("mov %%rsp, %0" : "=r"(rsp));
-    return rsp;
-}
-
-static inline u64 arch_get_rflags(void)
-{
-    u64 rflags;
-    asm volatile("pushfq; pop %0" : "=r"(rflags));
-    return rflags;
-}
-
 static inline void arch_set_cr0_bits(u64 set, u64 clear)
 {
     u64 cr0 = read_cr0();
@@ -137,8 +122,7 @@ static inline void arch_set_cr0_bits(u64 set, u64 clear)
 
 static inline void arch_set_cr4_bits(u64 set, u64 clear)
 {
-    u64 cr4 = __read_cr4();
-    cr4 |= set;
+    u64 cr4 = __read_cr4();    cr4 |= set;
     cr4 &= ~clear;
     __write_cr4(cr4);
 }

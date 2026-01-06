@@ -92,7 +92,8 @@ static u32 vmcs_setup_exit_controls(struct cpu_ctx *cpu)
     // host is in 64-bit mode
     desired.HostAddressSpaceSize = 1;
     
-    // load ia32_efer on vm-exit (required for 64-bit host)
+    // save/load ia32_efer on vm-exit (required for 64-bit host)
+    desired.SaveIa32Efer = 1;
     desired.LoadIa32Efer = 1;
     
     // save/load ia32_pat
@@ -434,6 +435,7 @@ int vmcs_validate(struct cpu_ctx *cpu)
     }
     
     exit_desired.HostAddressSpaceSize = 1;
+    exit_desired.SaveIa32Efer = 1;
     exit_desired.LoadIa32Efer = 1;
     exit_desired.SaveIa32Pat = 1;
     exit_desired.LoadIa32Pat = 1;

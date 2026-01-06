@@ -39,13 +39,3 @@ static inline u32 vmcs_encode_controls(u32 desired, u64 msr_value)
     return (desired | allowed_0) & allowed_1;
 }
 
-/*
-*   helper to setup segment access rights for vmcs
-*/
-static inline u32 vmcs_segment_access_rights(u32 access_rights)
-{
-    VMX_SEGMENT_ACCESS_RIGHTS ar = {.AsUInt = access_rights};
-    if (ar.Unusable)
-        return access_rights;
-    return access_rights;
-}
