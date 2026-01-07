@@ -147,7 +147,6 @@ u8 ept_get_memory_type(struct vmm_ctx *vmm, u64 phys_addr)
 {
     unsigned int i;
     
-    // check variable mtrrs
     for (i = 0; i < vmm->mtrr.num_ranges; i++) {
         if (phys_addr >= vmm->mtrr.ranges[i].base &&
             phys_addr <= vmm->mtrr.ranges[i].end) {
@@ -155,7 +154,6 @@ u8 ept_get_memory_type(struct vmm_ctx *vmm, u64 phys_addr)
         }
     }
     
-    // use default type
     return vmm->mtrr.default_type;
 }
 
@@ -169,14 +167,12 @@ int ept_build_identity_map(struct ept_state *ept, struct vmm_ctx *vmm)
     u64 phys_addr;
     u8 mem_type;
     
-    // setup pml4[0] -> pdpt
     tables->pml4[0].value = 0;
     tables->pml4[0].read = 1;
     tables->pml4[0].write = 1;
     tables->pml4[0].execute = 1;
     tables->pml4[0].pfn = virt_to_phys(tables->pdpt) >> 12;
     
-    // setup pdpt entries -> pd tables
     for (pdpt_idx = 0; pdpt_idx < EPT_ENTRIES_PER_TABLE; pdpt_idx++) {
         tables->pdpt[pdpt_idx].value = 0;
         tables->pdpt[pdpt_idx].read = 1;
@@ -184,18 +180,16 @@ int ept_build_identity_map(struct ept_state *ept, struct vmm_ctx *vmm)
         tables->pdpt[pdpt_idx].execute = 1;
         tables->pdpt[pdpt_idx].pfn = virt_to_phys(tables->pds[pdpt_idx]) >> 12;
         
-        // setup pd entries -> 2mb pages (identity map)
         for (pd_idx = 0; pd_idx < EPT_ENTRIES_PER_TABLE; pd_idx++) {
             phys_addr = ((u64)pdpt_idx << 30) | ((u64)pd_idx << 21);
             
-            // get memory type from mtrr
             mem_type = ept_get_memory_type(vmm, phys_addr);
             
             tables->pds[pdpt_idx][pd_idx].value = 0;
             tables->pds[pdpt_idx][pd_idx].read = 1;
             tables->pds[pdpt_idx][pd_idx].write = 1;
             tables->pds[pdpt_idx][pd_idx].execute = 1;
-            tables->pds[pdpt_idx][pd_idx].large_page = 1;  // 2mb page
+            tables->pds[pdpt_idx][pd_idx].large_page = 1;
             tables->pds[pdpt_idx][pd_idx].mem_type = mem_type;
             tables->pds[pdpt_idx][pd_idx].pfn = phys_addr >> 12;
         }
@@ -229,7 +223,6 @@ struct ept_state *ept_init(struct vmm_ctx *vmm)
     INIT_LIST_HEAD(&ept->hooks);
     spin_lock_init(&ept->lock);
     
-    // allocate ept tables (must be physically contiguous and page-aligned)
     ept->tables = (struct ept_tables *)__get_free_pages(GFP_KERNEL | __GFP_ZERO,
                                       get_order(sizeof(struct ept_tables)));
     if (!ept->tables) {
@@ -239,17 +232,15 @@ struct ept_state *ept_init(struct vmm_ctx *vmm)
     }
     ept->tables_phys = virt_to_phys(ept->tables);
     
-    // build identity map
     if (ept_build_identity_map(ept, vmm) != 0) {
         free_pages((unsigned long)ept->tables, get_order(sizeof(struct ept_tables)));
         kfree(ept);
         return NULL;
     }
     
-    // setup eptp
     ept->eptp.AsUInt = 0;
-    ept->eptp.MemoryType = EPT_MEMORY_TYPE_WB;  // write-back
-    ept->eptp.PageWalkLength = 3;  // 4-level page walk (value is n-1)
+    ept->eptp.MemoryType = EPT_MEMORY_TYPE_WB;
+    ept->eptp.PageWalkLength = 3;
     ept->eptp.EnableAccessAndDirtyFlags = 0;
     ept->eptp.PageFrameNumber = ept->tables_phys >> 12;
     
@@ -269,13 +260,11 @@ void ept_destroy(struct ept_state *ept)
     if (!ept)
         return;
     
-    // free split pages
     list_for_each_entry_safe(split, tmp_split, &ept->split_pages, list) {
         list_del(&split->list);
         free_pages_exact(split, sizeof(*split));
     }
     
-    // free hooks
     list_for_each_entry_safe(hook, tmp_hook, &ept->hooks, list) {
         if (hook->hook_virt)
             free_pages_exact(hook->hook_virt, PAGE_SIZE);

@@ -42,7 +42,6 @@ bool arch_vmx_enabled_by_bios(void)
     
     feature.AsUInt = native_read_msr(IA32_FEATURE_CONTROL);
     
-    // must be locked and vmx enabled outside smx
     if (!feature.LockBit) {
         hv_log(err, "ia32_feature_control is not locked\n");
         return false;
@@ -84,22 +83,18 @@ static void read_segment_descriptor(struct hv_segment_descriptor *desc, u16 sele
     
     desc->selector = selector;
     
-    // null selector
     if (selector == 0) {
         desc->base = 0;
         desc->limit = 0;
-        desc->access_rights = 0x10000;  // unusable
+        desc->access_rights = 0x10000;
         return;
     }
     
-    // get gdt base
     gdt = get_cpu_gdt_rw(smp_processor_id());
     entry = &gdt[selector >> 3];
     
-    // calculate base address
     base = get_desc_base(entry);
     
-    // for tss/ldt (system segments in 64-bit mode), read upper 32 bits of base
     if (entry->s == 0) {
         struct {
             u64 low;
@@ -108,7 +103,6 @@ static void read_segment_descriptor(struct hv_segment_descriptor *desc, u16 sele
         base |= (u64)(sys_desc->high & 0xFFFFFFFF) << 32;
     }
     
-    // calculate limit
     limit = get_desc_limit(entry);
     if (entry->g)
         limit = (limit << 12) | 0xFFF;
@@ -116,7 +110,6 @@ static void read_segment_descriptor(struct hv_segment_descriptor *desc, u16 sele
     desc->base = base;
     desc->limit = limit;
     
-    // build access rights from descriptor
     VMX_SEGMENT_ACCESS_RIGHTS ar = {0};
     ar.Type = entry->type;
     ar.DescriptorType = entry->s;
@@ -138,16 +131,13 @@ void arch_capture_cpu_state(struct hv_cpu_state *state)
 {
     struct desc_ptr gdtr, idtr;
     
-    // control registers
     state->cr0.AsUInt = read_cr0();
     state->cr2 = native_read_cr2();
     state->cr3.AsUInt = __read_cr3();
     state->cr4.AsUInt = __read_cr4();
     
-    // debug registers
     get_debugreg(state->dr7.AsUInt, 7);
     
-    // descriptor tables
     native_store_gdt(&gdtr);
     state->gdtr.base = gdtr.address;
     state->gdtr.limit = gdtr.size;
@@ -156,7 +146,6 @@ void arch_capture_cpu_state(struct hv_cpu_state *state)
     state->idtr.base = idtr.address;
     state->idtr.limit = idtr.size;
     
-    // segment registers
     u16 cs, ds, es, ss, fs, gs, tr, ldtr;
     
     asm volatile("mov %%cs, %0" : "=r"(cs));
@@ -177,12 +166,10 @@ void arch_capture_cpu_state(struct hv_cpu_state *state)
     read_segment_descriptor(&state->tr, tr);
     read_segment_descriptor(&state->ldtr, ldtr);
     
-    // fs/gs bases
     state->fs_base = native_read_msr(IA32_FS_BASE);
     state->gs_base = native_read_msr(IA32_GS_BASE);
     state->kernel_gs_base = native_read_msr(IA32_KERNEL_GS_BASE);
     
-    // msrs
     state->debugctl = native_read_msr(IA32_DEBUGCTL);
     state->sysenter_cs = native_read_msr(IA32_SYSENTER_CS);
     state->sysenter_esp = native_read_msr(IA32_SYSENTER_ESP);
@@ -190,7 +177,6 @@ void arch_capture_cpu_state(struct hv_cpu_state *state)
     state->efer = native_read_msr(IA32_EFER);
     state->pat = native_read_msr(IA32_PAT);
     
-    // system call msrs (long mode)
     state->star = native_read_msr(IA32_STAR);
     state->lstar = native_read_msr(IA32_LSTAR);
     state->cstar = native_read_msr(IA32_CSTAR);

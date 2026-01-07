@@ -39,7 +39,6 @@ VMXON *vmx_alloc_vmxon(struct cpu_ctx *cpu)
     
     memset(vmxon, 0, PAGE_SIZE);
     
-    // write vmcs revision id to first 31 bits (bit 31 must be 0)
     vmxon->RevisionId = cpu->vmm->vmx_caps.VmcsRevisionId;
     
     return vmxon;
@@ -75,11 +74,8 @@ VMX_MSR_BITMAP *vmx_alloc_msr_bitmap(void)
     if (!bitmap)
         return NULL;
     
-    // initialize to all zeros (no msr interception)
     memset(bitmap, 0, PAGE_SIZE);
     
-    // intercept writes to IA32_FEATURE_CONTROL to prevent guest from
-    // modifying vmx settings (security measure)
     vmx_set_msr_intercept(bitmap, IA32_FEATURE_CONTROL, false, true);
     
     return bitmap;
@@ -93,11 +89,9 @@ void vmx_set_fixed_bits(struct cpu_ctx *cpu)
     u64 cr0, cr4;
     u64 fixed0, fixed1;
     
-    // save original values
     cpu->orig_cr0.AsUInt = read_cr0();
     cpu->orig_cr4.AsUInt = __read_cr4();
     
-    // apply cr0 fixed bits
     cr0 = cpu->orig_cr0.AsUInt;
     fixed0 = native_read_msr(IA32_VMX_CR0_FIXED0);
     fixed1 = native_read_msr(IA32_VMX_CR0_FIXED1);
@@ -105,7 +99,6 @@ void vmx_set_fixed_bits(struct cpu_ctx *cpu)
     cr0 &= fixed1;
     write_cr0(cr0);
     
-    // apply cr4 fixed bits
     cr4 = cpu->orig_cr4.AsUInt;
     fixed0 = native_read_msr(IA32_VMX_CR4_FIXED0);
     fixed1 = native_read_msr(IA32_VMX_CR4_FIXED1);
@@ -131,20 +124,16 @@ int vmx_enter_root(struct cpu_ctx *cpu)
     CR4 cr4;
     int ret;
     
-    // check if vmx is already enabled
     cr4.AsUInt = __read_cr4();
     if (cr4.VmxEnable) {
         hv_cpu_log(err, "vmx already enabled (another hypervisor??)\n");
         return -EBUSY;
     }
     
-    // set required fixed bits in cr0/cr4
     vmx_set_fixed_bits(cpu);
     
-    // enable vmx operation (set cr4.vmxe)
     arch_enable_vmxe();
     
-    // execute vmxon
     ret = arch_vmxon(cpu->vmxon_phys);
     if (ret != 0) {
         hv_cpu_log(err, "vmxon failed\n");
@@ -153,7 +142,6 @@ int vmx_enter_root(struct cpu_ctx *cpu)
         return ret;
     }
     
-    // clear vmcs
     ret = arch_vmclear(cpu->vmcs_phys);
     if (ret != 0) {
         hv_cpu_log(err, "vmclear failed\n");
@@ -163,7 +151,6 @@ int vmx_enter_root(struct cpu_ctx *cpu)
         return ret;
     }
     
-    // load vmcs pointer
     ret = arch_vmptrld(cpu->vmcs_phys);
     if (ret != 0) {
         hv_cpu_log(err, "vmptrld failed\n");
@@ -184,17 +171,14 @@ int vmx_exit_root(struct cpu_ctx *cpu)
 {
     int ret;
     
-    // clear vmcs before vmxoff
     ret = arch_vmclear(cpu->vmcs_phys);
     if (ret != 0)
         hv_cpu_log(err, "vmclear failed during exit\n");
     
-    // exit vmx operation
     ret = arch_vmxoff();
     if (ret != 0)
         hv_cpu_log(err, "vmxoff failed\n");
     
-    // disable vmxe and restore cr bits
     arch_disable_vmxe();
     vmx_restore_fixed_bits(cpu);
     
@@ -213,7 +197,6 @@ int vmx_setup_vmcs(struct cpu_ctx *cpu)
     if (ret != 0)
         return ret;
     
-    // validate vmcs configuration before launch
     ret = vmcs_validate(cpu);
     if (ret != 0) {
         hv_cpu_log(err, "vmcs validation failed\n");

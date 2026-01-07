@@ -41,6 +41,7 @@ void vmexit_failure_handler(struct cpu_ctx *cpu, struct gp_regs *regs);
 int vmexit_handle_cpuid(struct cpu_ctx *cpu, struct vmexit_ctx *ctx);
 int vmexit_handle_msr_read(struct cpu_ctx *cpu, struct vmexit_ctx *ctx);
 int vmexit_handle_msr_write(struct cpu_ctx *cpu, struct vmexit_ctx *ctx);
+int vmexit_handle_mov_cr(struct cpu_ctx *cpu, struct vmexit_ctx *ctx);
 int vmexit_handle_vmcall(struct cpu_ctx *cpu, struct vmexit_ctx *ctx);
 int vmexit_handle_ept_violation(struct cpu_ctx *cpu, struct vmexit_ctx *ctx);
 int vmexit_handle_ept_misconfig(struct cpu_ctx *cpu, struct vmexit_ctx *ctx);

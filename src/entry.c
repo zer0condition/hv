@@ -47,7 +47,7 @@ static int __init hv_init(void)
     }
     
     hv_log(info, "hypervisor enabled successfully (%u/%u cpus)\n",
-           vmm->num_virtualized, vmm->num_cpus);
+           atomic_read(&vmm->num_virtualized), vmm->num_cpus);
     
     return 0;
 }

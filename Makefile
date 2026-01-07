@@ -6,19 +6,14 @@ hv-y += src/entry.o src/vmm.o src/cpu.o src/vmx.o src/vmcs.o src/ept.o src/exit.
 KDIR ?= /lib/modules/$(shell uname -r)/build
 PWD := $(shell pwd)
 
-# Common flags
-ccflags-y := -I$(src)/include -Wno-declaration-after-statement
-
-# Debug build
-debug: ccflags-y += -DDEBUG -g -O0
-debug: all
-
-# Release build
-release: ccflags-y += -O2 -DNDEBUG
-release: all
+# Release build by default (no debug logging for performance)
+ccflags-y := -I$(src)/include -Wno-declaration-after-statement -O2
 
 all:
 	$(MAKE) -C $(KDIR) M=$(PWD) modules
+
+debug:
+	$(MAKE) -C $(KDIR) M=$(PWD) modules EXTRA_CFLAGS="-DDEBUG -g -O0"
 
 clean:
 	$(MAKE) -C $(KDIR) M=$(PWD) clean
@@ -31,4 +26,4 @@ uninstall:
 
 reload: uninstall install
 
-.PHONY: all clean install uninstall reload debug release
+.PHONY: all clean install uninstall reload debug
