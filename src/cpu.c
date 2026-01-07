@@ -26,7 +26,6 @@ int cpu_ctx_init(struct cpu_ctx *cpu, struct vmm_ctx *vmm, unsigned int cpu_id)
     cpu->failed = false;
     cpu->vmexit_handler = vmx_vmexit_handler;
     
-    // allocate vmxon region
     cpu->vmxon = vmx_alloc_vmxon(cpu);
     if (!cpu->vmxon) {
         hv_cpu_log(err, "failed to allocate vmxon region\n");
@@ -34,7 +33,6 @@ int cpu_ctx_init(struct cpu_ctx *cpu, struct vmm_ctx *vmm, unsigned int cpu_id)
     }
     cpu->vmxon_phys = virt_to_phys(cpu->vmxon);
     
-    // allocate vmcs
     cpu->vmcs = vmx_alloc_vmcs(cpu);
     if (!cpu->vmcs) {
         hv_cpu_log(err, "failed to allocate vmcs region\n");
@@ -42,7 +40,6 @@ int cpu_ctx_init(struct cpu_ctx *cpu, struct vmm_ctx *vmm, unsigned int cpu_id)
     }
     cpu->vmcs_phys = virt_to_phys(cpu->vmcs);
     
-    // allocate msr bitmap
     cpu->msr_bitmap = vmx_alloc_msr_bitmap();
     if (!cpu->msr_bitmap) {
         hv_cpu_log(err, "failed to allocate msr bitmap\n");
@@ -50,7 +47,6 @@ int cpu_ctx_init(struct cpu_ctx *cpu, struct vmm_ctx *vmm, unsigned int cpu_id)
     }
     cpu->msr_bitmap_phys = virt_to_phys(cpu->msr_bitmap);
     
-    // allocate host stack
     cpu->host_stack = (struct host_stack *)__get_free_pages(GFP_KERNEL, 
                                           get_order(VMX_HOST_STACK_SIZE));
     if (!cpu->host_stack) {
@@ -117,15 +113,12 @@ void cpu_vmx_init(struct cpu_ctx *cpu, u64 guest_rsp, u64 guest_rip, u64 guest_r
     hv_cpu_log(debug, "vmx init: rsp=0x%llx rip=0x%llx rflags=0x%llx\n",
                guest_rsp, guest_rip, guest_rflags);
     
-    // save guest resume state
     cpu->guest_rsp = guest_rsp;
     cpu->guest_rip = guest_rip;
     cpu->guest_rflags = guest_rflags;
     
-    // capture current cpu state
     arch_capture_cpu_state(&cpu->state);
     
-    // enter vmx root operation
     ret = vmx_enter_root(cpu);
     if (ret != 0) {
         hv_cpu_log(err, "failed to enter vmx root: %d\n", ret);
@@ -133,7 +126,6 @@ void cpu_vmx_init(struct cpu_ctx *cpu, u64 guest_rsp, u64 guest_rip, u64 guest_r
         return;
     }
     
-    // setup vmcs
     ret = vmx_setup_vmcs(cpu);
     if (ret != 0) {
         hv_cpu_log(err, "failed to setup vmcs: %d\n", ret);
@@ -142,11 +134,9 @@ void cpu_vmx_init(struct cpu_ctx *cpu, u64 guest_rsp, u64 guest_rip, u64 guest_r
         return;
     }
     
-    // launch the vm - this should not return on success
     hv_cpu_log(info, "launching vm...\n");
     ret = vmx_launch(cpu);
     
-    // if we get here, vmlaunch failed
     hv_cpu_log(err, "vmlaunch failed: error=%llu\n", vmx_get_error());
     vmx_exit_root(cpu);
     cpu->failed = true;
@@ -160,7 +150,6 @@ int cpu_virtualize(struct cpu_ctx *cpu)
     // use assembly entry point to save registers and call cpu_vmx_init
     vmx_launch_guest(cpu->vmm);
     
-    // if we return here, check if virtualization succeeded
     if (cpu->failed)
         return -1;
     
@@ -170,18 +159,22 @@ int cpu_virtualize(struct cpu_ctx *cpu)
 
 /*
 *   devirtualize current cpu
-*   called via cpuid with magic leaf to exit vmx
+*   uses vmcall to cleanly exit vmx without corrupting ipi state
 */
 void cpu_devirtualize(struct cpu_ctx *cpu)
 {
-    u32 regs[4];
+    int ret;
     
     if (!cpu->virtualized)
         return;
     
-    // issue magic cpuid to trigger hypervisor exit
-    cpuid_count(HV_CPUID_MAGIC_LEAF, HV_CPUID_MAGIC_SUBLEAF,
-                &regs[0], &regs[1], &regs[2], &regs[3]);
+    asm volatile(
+        "mov %[call_num], %%rax\n\t"
+        "vmcall\n\t"
+        : "=a"(ret)
+        : [call_num] "i"(HV_VMCALL_STOP)
+        : "memory"
+    );
     
     cpu->virtualized = false;
 }

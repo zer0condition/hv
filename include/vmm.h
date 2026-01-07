@@ -1,6 +1,7 @@
 #pragma once
 
 #include <linux/types.h>
+#include <linux/atomic.h>
 #include "ia32/ia32_wrapper.h"
 #include "cpu.h"
 #include "ept.h"
@@ -13,7 +14,10 @@ struct ept_state;
 */
 struct vmm_ctx {
     unsigned int num_cpus;
-    unsigned int num_virtualized;
+    atomic_t num_virtualized;
+    
+    // flag to signal all cpus to exit vmx
+    volatile bool should_exit;
     
     // per-cpu contexts array
     struct cpu_ctx *cpu_ctxs;

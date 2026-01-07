@@ -28,6 +28,11 @@
 #define HV_CPUID_MAGIC_SUBLEAF   0
 
 /*
+*   vmcall hypercall numbers
+*/
+#define HV_VMCALL_STOP           0x1  // devirtualize and exit VMX
+
+/*
 *   physical address mask (48-bit physical address space on current Intel)
 */
 #define HV_PHYS_ADDR_MASK        ((1ULL << 48) - 1)

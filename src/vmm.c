@@ -7,7 +7,8 @@
 #include <linux/mm.h>
 #include <linux/smp.h>
 #include <linux/cpu.h>
-
+#include <linux/atomic.h>
+#include <linux/delay.h>
 #include "vmm.h"
 #include "cpu.h"
 #include "vmx.h"
@@ -54,7 +55,6 @@ static void vmm_read_mtrr(struct vmm_ctx *vmm)
     
     mtrr_cap.AsUInt = native_read_msr(IA32_MTRR_CAPABILITIES);
     
-    // read variable range mtrrs
     vmm->mtrr.num_ranges = 0;
     for (i = 0; i < mtrr_cap.VariableRangeCount && i < 16; i++) {
         IA32_MTRR_PHYSBASE_REGISTER base;
@@ -67,13 +67,11 @@ static void vmm_read_mtrr(struct vmm_ctx *vmm)
         if (!mask.Valid)
             continue;
         
-        // prevent buffer overflow
         if (vmm->mtrr.num_ranges >= 16) {
             hv_log(warn, "max mtrr ranges (%u) reached, ignoring additional ranges\n", 16);
             break;
         }
         
-        // calculate range
         range_base = base.PageFrameNumber << 12;
         range_size = (~(mask.PageFrameNumber << 12) + 1) & HV_PHYS_ADDR_MASK;
         range_end = range_base + range_size - 1;
@@ -100,26 +98,11 @@ static void vmm_cpu_init(void *data)
     hv_cpu_log(info, "initializing virtualization\n");
     
     if (cpu_virtualize(cpu) == 0) {
-        vmm->num_virtualized++;
+        atomic_inc(&vmm->num_virtualized);
         hv_cpu_log(info, "successfully virtualized\n");
     } else {
         cpu->failed = true;
         hv_cpu_log(err, "failed to virtualize\n");
-    }
-}
-
-/*
-*   per-cpu shutdown callback
-*/
-static void vmm_cpu_shutdown(void *data)
-{
-    struct vmm_ctx *vmm = data;
-    unsigned int cpu_id = smp_processor_id();
-    struct cpu_ctx *cpu = &vmm->cpu_ctxs[cpu_id];
-    
-    if (cpu->virtualized) {
-        hv_cpu_log(info, "devirtualizing\n");
-        cpu_devirtualize(cpu);
     }
 }
 
@@ -141,7 +124,8 @@ struct vmm_ctx *vmm_init(void)
     }
     
     vmm->num_cpus = num_online_cpus();
-    vmm->num_virtualized = 0;
+    atomic_set(&vmm->num_virtualized, 0);
+    vmm->should_exit = false;
     vmm->vmx_caps.AsUInt = native_read_msr(IA32_VMX_BASIC);
     
     hv_log(info, "vmx capabilities:\n");
@@ -150,10 +134,8 @@ struct vmm_ctx *vmm_init(void)
     hv_log(info, "  true controls: %s\n", 
            vmm->vmx_caps.VmxControls ? "yes" : "no");
     
-    // read mtrr configuration
     vmm_read_mtrr(vmm);
     
-    // allocate per-cpu contexts
     vmm->cpu_ctxs = kzalloc(sizeof(struct cpu_ctx) * vmm->num_cpus, GFP_KERNEL);
     if (!vmm->cpu_ctxs) {
         hv_log(err, "failed to allocate cpu contexts\n");
@@ -161,7 +143,6 @@ struct vmm_ctx *vmm_init(void)
         return NULL;
     }
     
-    // initialize per-cpu contexts
     for (i = 0; i < vmm->num_cpus; i++) {
         if (cpu_ctx_init(&vmm->cpu_ctxs[i], vmm, i) != 0) {
             hv_log(err, "failed to initialize cpu %u context\n", i);
@@ -169,7 +150,6 @@ struct vmm_ctx *vmm_init(void)
         }
     }
     
-    // initialize ept
     vmm->ept = ept_init(vmm);
     if (!vmm->ept) {
         hv_log(err, "failed to initialize ept\n");
@@ -193,12 +173,11 @@ int vmm_start(struct vmm_ctx *vmm)
 {
     hv_log(info, "starting hypervisor on %u cpus\n", vmm->num_cpus);
     
-    // run on each cpu with interrupts disabled
     on_each_cpu(vmm_cpu_init, vmm, 1);
     
-    if (vmm->num_virtualized != vmm->num_cpus) {
-        hv_log(err, "only %u/%u cpus virtualized\n",
-               vmm->num_virtualized, vmm->num_cpus);
+    if (atomic_read(&vmm->num_virtualized) != vmm->num_cpus) {
+        hv_log(err, "only %d/%u cpus virtualized\n",
+               atomic_read(&vmm->num_virtualized), vmm->num_cpus);
         return -1;
     }
     
@@ -208,12 +187,37 @@ int vmm_start(struct vmm_ctx *vmm)
 
 /*
 *   stop hypervisor on all cpus
+*   uses flag-based approach to avoid IPI corruption
 */
 void vmm_stop(struct vmm_ctx *vmm)
 {
+    unsigned int i;
+    int timeout;
+    
     hv_log(info, "stopping hypervisor\n");
     
-    on_each_cpu(vmm_cpu_shutdown, vmm, 1);
+    WRITE_ONCE(vmm->should_exit, true);
+    
+    kick_all_cpus_sync();
+    
+    timeout = 1000;
+    while (timeout > 0) {
+        bool all_done = true;
+        for (i = 0; i < vmm->num_cpus; i++) {
+            if (vmm->cpu_ctxs[i].virtualized) {
+                all_done = false;
+                break;
+            }
+        }
+        if (all_done)
+            break;
+        msleep(1);
+        timeout--;
+    }
+    
+    if (timeout == 0) {
+        hv_log(warn, "timeout waiting for CPUs to devirtualize\n");
+    }
     
     hv_log(info, "hypervisor stopped\n");
 }
